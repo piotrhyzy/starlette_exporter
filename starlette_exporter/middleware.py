@@ -3,6 +3,7 @@ import inspect
 import logging
 import re
 import time
+import warnings
 from collections import OrderedDict
 from contextlib import suppress
 from inspect import iscoroutine
@@ -88,6 +89,7 @@ class PrometheusMiddleware:
         app_name: str = "starlette",
         prefix: str = "starlette",
         buckets: Optional[Sequence[Union[float, str]]] = None,
+        group_unhandled_paths: bool = False,
         filter_unhandled_paths: bool = True,
         skip_paths: Optional[List[str]] = None,
         skip_methods: Optional[List[str]] = None,
@@ -100,6 +102,16 @@ class PrometheusMiddleware:
         self.app_name = app_name
         self.prefix = prefix
         self.group_paths = group_paths
+
+        if group_unhandled_paths and not filter_unhandled_paths:
+            filter_unhandled_paths = True
+            warnings.warn(
+                "filter_unhandled_paths was set to False but has been changed to True "
+                "because group_unhandled_paths is True.",
+                UserWarning,
+            )
+
+        self.group_unhandled_paths = group_unhandled_paths
         self.filter_unhandled_paths = filter_unhandled_paths
 
         self.kwargs = {}
@@ -416,12 +428,15 @@ class PrometheusMiddleware:
                 with suppress(Exception):
                     grouped_path = get_matching_route_path(original_scope, router.routes)
 
+            # group_unhandled_paths works similar to filter_unhandled_paths, but instead of
+            # removing the request from the metrics, it groups it under a single path.
+            if self.group_unhandled_paths and grouped_path is None:
+                path = "__unknown__"
             # filter_unhandled_paths removes any requests without mapped endpoint from the metrics.
-            if self.filter_unhandled_paths and grouped_path is None:
+            elif self.filter_unhandled_paths and grouped_path is None:
                 if exception:
                     raise exception
                 return
-
 
             # group_paths enables returning the original router path (with url param names)
             # for example, when using this option, requests to /api/product/1 and /api/product/3
